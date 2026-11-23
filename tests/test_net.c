@@ -22,10 +22,17 @@ static bool Line(Peer *p, const char *line, void *ctx) {
 }
 int main(void) {
   CHECK(NetSignals());
+  uint64_t values[2];
+  CHECK(NetNumbers("ARRIVE 0 1", "ARRIVE ", values, 2) && values[0] == 0 &&
+        values[1] == 1);
+  CHECK(!NetNumbers("ARRIVE 0 1 extra", "ARRIVE ", values, 2));
+  CHECK(!NetNumbers("ARRIVE  1", "ARRIVE ", values, 2));
+  CHECK(!NetNumbers("ARRIVE -1 0", "ARRIVE ", values, 2));
+  CHECK(!NetNumbers("ARRIVE 18446744073709551616 0", "ARRIVE ", values, 2));
   CHECK(!NetPrepare(FD_SETSIZE) && errno == ERANGE);
   Peer invalid = {.fd = FD_SETSIZE};
   bool ready;
-  CHECK(NetWait(&invalid, 1, -1, &ready) == -1 && errno == ERANGE);
+  CHECK(NetWait(&invalid, 1, -1, &ready, 100) == -1 && errno == ERANGE);
   int fds[2];
   CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
   CHECK(NetPrepare(fds[0]) && NetPrepare(fds[1]));

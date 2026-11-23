@@ -4,25 +4,43 @@
 #include <string.h>
 #include <sys/socket.h>
 
+typedef struct Generator {
+  uint64_t values[5], tick, last;
+  bool pending, emitted;
+} Generator;
+static unsigned Random(const Generator *g, unsigned draw) {
+  uint64_t x = g->values[1] + UINT64_C(0x9e3779b97f4a7c15) *
+                                  (g->values[0] * UINT64_C(0x100000000) +
+                                   2 * g->tick + draw + 1);
+  x = (x ^ (x >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
+  x = (x ^ (x >> 27)) * UINT64_C(0x94d049bb133111eb);
+  return (unsigned)((x ^ (x >> 31)) % 1000);
+}
 static bool Line(Peer *p, const char *line, void *context) {
-  (void)context;
+  Generator *g = context;
   if (!strcmp(line, "PONG"))
     return p->role != 0;
-  if (p->role || strncmp(line, "WELCOME ", 8))
-    return false;
-  char fields[LINE_SIZE];
-  strcpy(fields, line + 8);
-  const uint64_t limits[] = {MAX_STREAMS - 1, UINT32_MAX, 1000, 1, 1000};
-  char *save, *word = strtok_r(fields, " ", &save);
-  for (unsigned i = 0; i < 5; ++i) {
-    uint64_t value;
-    if (!word || !Number(word, limits[i], &value))
+  if (p->role) {
+    uint64_t v[3];
+    if (NetNumbers(line, "TICK ", v, 1)) {
+      if (g->emitted && v[0] <= g->last)
+        return false;
+      g->tick = v[0];
+      g->pending = true;
+      return true;
+    }
+    if (strncmp(line, "EVENT ", 6) &&
+        (!NetNumbers(line, "ACK ", v, 3) || v[2] > 1))
       return false;
-    word = strtok_r(NULL, " ", &save);
+  } else {
+    const uint64_t limits[] = {MAX_STREAMS - 1, UINT32_MAX, 1000, 1, 1000};
+    if (!NetNumbers(line, "WELCOME ", g->values, 5))
+      return false;
+    for (unsigned i = 0; i < 5; ++i)
+      if (g->values[i] > limits[i])
+        return false;
+    p->role = 1;
   }
-  if (word)
-    return false;
-  p->role = 1;
   return printf("%s\n", line) >= 0 && fflush(stdout) == 0;
 }
 int main(int argc, char **argv) {
@@ -39,6 +57,7 @@ int main(int argc, char **argv) {
     perror("sigaction");
     return 1;
   }
+  Generator generator = {0};
   Peer p = {.fd = -1};
   uint64_t deadline = NetNow() + 10000, ping = 0, retryAt = 0;
   bool pending = false;
@@ -54,7 +73,7 @@ int main(int argc, char **argv) {
       }
     }
     bool ready;
-    int result = NetWait(&p, 1, -1, &ready);
+    int result = NetWait(&p, 1, -1, &ready, 100);
     if (result < 0) {
       if (errno == EINTR)
         continue;
@@ -74,8 +93,22 @@ int main(int argc, char **argv) {
     if (p.fd < 0 || pending)
       continue;
     if ((p.writable && !NetFlush(&p)) ||
-        (p.readable && !NetRead(&p, Line, NULL)))
+        (p.readable && !NetRead(&p, Line, &generator)))
       break;
+    if (generator.pending) {
+      generator.pending = false;
+      generator.emitted = true;
+      generator.last = generator.tick;
+      if (Random(&generator, 0) < generator.values[2]) {
+        char request[96];
+        unsigned emergency = generator.values[3] == CAR &&
+                             Random(&generator, 1) < generator.values[4];
+        int n = snprintf(request, sizeof(request), "ARRIVE %llu %u\n",
+                         (unsigned long long)generator.tick, emergency);
+        if (n < 0 || (size_t)n >= sizeof(request) || !NetQueue(&p, request))
+          break;
+      }
+    }
     uint64_t now = NetNow();
     if (p.role) {
       deadline = p.last + 5000;

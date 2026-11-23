@@ -145,7 +145,8 @@ bool NetRead(Peer *p, LineCallback callback, void *context) {
   }
   return true;
 }
-int NetWait(Peer *peers, size_t count, int listener, bool *acceptReady) {
+int NetWait(Peer *peers, size_t count, int listener, bool *acceptReady,
+            unsigned timeoutMs) {
   fd_set readSet, writeSet;
   FD_ZERO(&readSet);
   FD_ZERO(&writeSet);
@@ -175,7 +176,9 @@ int NetWait(Peer *peers, size_t count, int listener, bool *acceptReady) {
     if (p->fd > maximum)
       maximum = p->fd;
   }
-  struct timeval timeout = {.tv_usec = 100000};
+  struct timeval timeout = {.tv_sec = (time_t)(timeoutMs / 1000),
+                            .tv_usec =
+                                (suseconds_t)((timeoutMs % 1000) * 1000)};
   int result = select(maximum + 1, &readSet, &writeSet, NULL, &timeout);
   if (result <= 0)
     return result;
@@ -186,4 +189,26 @@ int NetWait(Peer *peers, size_t count, int listener, bool *acceptReady) {
       peers[i].writable = FD_ISSET(peers[i].fd, &writeSet);
     }
   return result;
+}
+
+bool NetNumbers(const char *line, const char *prefix, uint64_t *values,
+                size_t count) {
+  size_t skip = strlen(prefix);
+  if (strncmp(line, prefix, skip) || strlen(line) >= LINE_SIZE)
+    return false;
+  char text[LINE_SIZE];
+  strcpy(text, line + skip);
+  char *word = text;
+  for (size_t i = 0; i < count; ++i) {
+    char *space = strchr(word, ' ');
+    if ((i + 1 < count) != (space != NULL))
+      return false;
+    if (space)
+      *space = 0;
+    if (!Number(word, UINT64_MAX, &values[i]))
+      return false;
+    if (space)
+      word = space + 1;
+  }
+  return true;
 }

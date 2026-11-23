@@ -17,6 +17,8 @@ typedef bool (*LineCallback)(Peer *peer, const char *line, void *context);
 extern volatile sig_atomic_t interrupted;
 bool NetSignals(void);
 uint64_t NetNow(void);
+bool NetNumbers(const char *line, const char *prefix, uint64_t *values,
+                size_t count);
 bool NetAddress(const char *ip, const char *port);
 bool NetPrepare(int fd);
 int NetListen(const char *ip, const char *port);
@@ -26,5 +28,6 @@ void NetClose(Peer *p);
 bool NetQueue(Peer *p, const char *text);
 bool NetRead(Peer *p, LineCallback callback, void *context);
 bool NetFlush(Peer *p);
-int NetWait(Peer *peers, size_t count, int listener, bool *acceptReady);
+int NetWait(Peer *peers, size_t count, int listener, bool *acceptReady,
+            unsigned timeoutMs);
 #endif

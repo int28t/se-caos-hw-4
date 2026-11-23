@@ -30,4 +30,7 @@ if(BUILD_TESTING)
       --build-dir ${CMAKE_CURRENT_BINARY_DIR})
   set_tests_properties(protocol_buffers PROPERTIES TIMEOUT 10)
   set_tests_properties(protocol PROPERTIES TIMEOUT 40)
+  add_test(NAME scenarios COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/run.py
+      --build-dir ${CMAKE_CURRENT_BINARY_DIR} --suite scenarios)
+  set_tests_properties(scenarios PROPERTIES TIMEOUT 50)
 endif()

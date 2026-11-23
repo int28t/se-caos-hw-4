@@ -56,3 +56,6 @@ dkms.conf
 
 # Local CMake builds and test results
 build*/
+
+# Python test cache
+__pycache__/
