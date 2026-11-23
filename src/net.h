@@ -32,4 +32,8 @@ bool NetRead(Peer *p, LineCallback callback, void *context);
 bool NetFlush(Peer *p);
 int NetWait(Peer *peers, size_t count, int listener, bool *acceptReady,
             unsigned timeoutMs);
+// Общий цикл подключения, heartbeat и освобождения ресурсов клиентов.
+int NetClient(const char *ip, const char *port, const char *hello,
+              LineCallback callback, bool (*action)(Peer *, void *),
+              void *context);
 #endif

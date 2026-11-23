@@ -13,7 +13,7 @@ from check_log import verify
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--build-dir', type=Path, required=True)
-parser.add_argument('--suite', choices=['protocol', 'scenarios'], default='protocol')
+parser.add_argument('--suite', choices=['protocol', 'scenarios', 'observers'], default='protocol')
 args = parser.parse_args()
 build = args.build_dir.resolve()
 root = Path(__file__).resolve().parents[1]
@@ -101,6 +101,11 @@ class Protocol(Harness):
         good = self.connect()
         good.sendall(b'HELLO 1 WATCH\nPING\n')
         self.assertEqual(self.line(good), b'WELCOME WATCH\n')
+        while True:
+            row = self.line(good)
+            self.assertTrue(row)
+            if row.startswith(b'SNAP_END '):
+                break
         self.assertEqual(self.line(good), b'PONG\n')
 
     def test_incomplete_peer_and_timeout(self):
@@ -255,7 +260,90 @@ class Scenarios(Harness):
         self.assertEqual(self.run_model(rates=(0, 0, 0), expected=3)['arrived'], 0)
 
 
+class Observers(Harness):
+    def snapshot(self):
+        peer = self.connect()
+        peer.sendall(b'HELLO 1 WATCH\n')
+        self.assertEqual(self.line(peer), b'WELCOME WATCH\n')
+        rows = []
+        while True:
+            row = self.line(peer).decode().strip()
+            self.assertTrue(row)
+            rows.append(row)
+            if row.startswith('SNAP_END '):
+                break
+        begin = next(r for r in rows if r.startswith('SNAP_BEGIN ')).split()
+        self.assertEqual(rows[-1], 'SNAP_END ' + begin[1])
+        self.assertEqual(len([r for r in rows if r.startswith('FLOW ')]), 2)
+        return peer, rows, int(begin[1])
+
+    def test_initial_snapshot(self):
+        _, rows, seq = self.snapshot()
+        self.assertEqual(seq, 0)
+        self.assertIn('STATE 0 0 0 0 0 0', rows)
+
+    def events(self, peer):
+        rows = []
+        while True:
+            line = self.line(peer).decode().strip()
+            if not line:
+                return rows
+            if line.startswith('EVENT '):
+                rows.append(line)
+
+    def test_observers_reconnect_and_log(self):
+        first, _, _ = self.snapshot()
+        second, _, _ = self.snapshot()
+        third, _, _ = self.snapshot()
+        slow, _, _ = self.snapshot()  # Дальнейшие события намеренно не читаются.
+        with tempfile.TemporaryDirectory(dir=build) as tmp:
+            path = Path(tmp)/'watch.log'
+            observer = self.spawn('observer', '127.0.0.1', str(self.port), str(path),
+                                  output=subprocess.DEVNULL)
+            deadline = time.monotonic() + 2
+            while not path.exists() or 'SNAP_END ' not in path.read_text():
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(.01)
+            for name in ['A', 'P']:
+                self.spawn('client', '127.0.0.1', str(self.port), name, output=subprocess.DEVNULL)
+            prefix = []
+            while not any('Разрешение:' in r for r in prefix):
+                prefix.append(self.line(first).decode().strip())
+            second.close()
+            late, snapshot, boundary = self.snapshot()
+            self.assertGreater(boundary, 0)
+            total = 0
+            for row in snapshot:
+                if row.startswith('FLOW '):
+                    f = list(map(int, row.split()[1:]))
+                    self.assertEqual(f[5], f[6] + f[7] + f[1] + int(f[3] != 0))
+                    total += f[5]
+            self.assertGreater(total, 0)
+            all_events = prefix + self.events(first)
+            self.assertEqual(all_events, self.events(third))
+            later = self.events(late)
+            self.assertEqual(later, [r for r in all_events if int(r.split()[1]) > boundary])
+            self.assertEqual(self.server.wait(timeout=2), 0)
+            self.assertEqual(observer.wait(timeout=2), 1)  # STOP появится в этапе 6.
+            full = path.read_text()
+            self.assertGreater(verify(full, (root/'data/minimal.conf').read_text())['passed'], 0)
+            before = full
+            duplicate = self.spawn('observer', '127.0.0.1', str(self.port), str(path))
+            self.assertEqual(duplicate.wait(timeout=2), 1)
+            self.assertEqual(path.read_text(), before)
+
+    def test_connection_limit(self):
+        for _ in range(63):
+            self.connect()
+        excess = self.connect()
+        self.assertEqual(excess.recv(1), b'')
+        healthy = self.sockets[0]
+        healthy.sendall(b'HELLO 1 WATCH\n')
+        self.assertEqual(self.line(healthy), b'WELCOME WATCH\n')
+
+
+
 if __name__ == '__main__':
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(
-        Protocol if args.suite == 'protocol' else Scenarios)
+        {'protocol': Protocol, 'scenarios': Scenarios, 'observers': Observers}[args.suite])
     raise SystemExit(not unittest.TextTestRunner().run(suite).wasSuccessful())

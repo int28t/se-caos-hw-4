@@ -32,10 +32,54 @@ static void Event(void *context, int stream, uint64_t sequence, uint64_t now,
     s->failed = true;
   for (unsigned i = 0; i < MAX_PEERS; ++i) {
     Peer *p = &peers[i];
-    if (p->fd >= 0 && !p->closing && p->role == 1 && p->stream == stream &&
+    if (p->fd >= 0 && !p->closing &&
+        (p->role == 2 || (p->role == 1 && p->stream == stream)) &&
         !NetQueue(p, line))
       p->closing = true;
   }
+}
+static bool Watch(Peer *p, const Model *m) {
+  Snapshot view;
+  ModelSnapshot(m, &view);
+  if (!NetQueue(p, "WELCOME WATCH\n"))
+    return false;
+  char line[LINE_SIZE];
+  for (unsigned i = 0; i < m->cfg.streamCount; ++i) {
+    const Stream *f = &m->cfg.streams[i];
+    int n = snprintf(
+        line, sizeof(line), "META STREAM %u %s %u %u %u %u %u %u\n", i, f->name,
+        (unsigned)f->kind, (unsigned)f->direction, (unsigned)f->maneuver,
+        f->capacity, f->crossingTicks, m->cfg.conflicts[i]);
+    if (n < 0 || (size_t)n >= sizeof(line) || !NetQueue(p, line))
+      return false;
+  }
+  for (unsigned i = 0; i < m->cfg.phaseCount; ++i) {
+    int n = snprintf(line, sizeof(line), "META PHASE %u %s %u\n", i,
+                     m->cfg.phases[i].name, m->cfg.phases[i].mask);
+    if (n < 0 || (size_t)n >= sizeof(line) || !NetQueue(p, line))
+      return false;
+  }
+  int n = snprintf(line, sizeof(line),
+                   "META TIMING %u %u %u %u\nSNAP_BEGIN %" PRIu64 " %" PRIu64
+                   "\nSTATE %u %u %u %u %" PRIu64 " %u\n",
+                   m->cfg.tickMs, m->cfg.minGreen, m->cfg.maxGreen,
+                   m->cfg.clearance, view.sequence, view.now, view.phase,
+                   (unsigned)view.state, view.signals, view.active, view.passed,
+                   (unsigned)view.stop);
+  if (n < 0 || (size_t)n >= sizeof(line) || !NetQueue(p, line))
+    return false;
+  for (unsigned i = 0; i < view.count; ++i) {
+    const FlowView *f = &view.flows[i];
+    n = snprintf(line, sizeof(line),
+                 "FLOW %u %u %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64
+                 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %u\n",
+                 i, f->queued, f->headId, f->activeId, f->leaveAt, f->arrived,
+                 f->passed, f->refused, f->waitSum, f->waitMax, f->peak);
+    if (n < 0 || (size_t)n >= sizeof(line) || !NetQueue(p, line))
+      return false;
+  }
+  n = snprintf(line, sizeof(line), "SNAP_END %" PRIu64 "\n", view.sequence);
+  return n > 0 && (size_t)n < sizeof(line) && NetQueue(p, line);
 }
 static uint64_t Time(const Session *s) { return (NetNow() - s->start) * NS; }
 static bool Line(Peer *p, const char *line, void *context) {
@@ -68,8 +112,10 @@ static bool Line(Peer *p, const char *line, void *context) {
            NetQueue(p, reply);
   }
   if (!strcmp(line, "HELLO 1 WATCH")) {
+    if (s->started)
+      ModelAdvance(&s->model, Time(s));
     p->role = 2;
-    return NetQueue(p, "WELCOME WATCH\n");
+    return Watch(p, &s->model);
   }
   const char *prefix = "HELLO 1 FLOW ";
   if (strncmp(line, prefix, strlen(prefix)))

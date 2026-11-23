@@ -215,3 +215,68 @@ bool NetNumbers(const char *line, const char *prefix, uint64_t *values,
   }
   return true;
 }
+
+int NetClient(const char *ip, const char *port, const char *hello,
+              LineCallback callback, bool (*action)(Peer *, void *),
+              void *context) {
+  if (!NetSignals()) {
+    perror("sigaction");
+    return 1;
+  }
+  int flags = fcntl(STDOUT_FILENO, F_GETFL);
+  if (flags < 0 || fcntl(STDOUT_FILENO, F_SETFL, flags | O_NONBLOCK) < 0) {
+    perror("stdout");
+    return 1;
+  }
+  Peer p = {.fd = -1};
+  uint64_t deadline = NetNow() + 10000, ping = 0, retryAt = 0;
+  bool pending = false;
+  while (!interrupted && NetNow() < deadline) {
+    if (p.fd < 0 && NetNow() >= retryAt) {
+      retryAt = NetNow() + 100;
+      p.fd = NetConnect(ip, port, &pending);
+      if (p.fd >= 0 && !NetQueue(&p, hello))
+        break;
+    }
+    bool ready;
+    int result = NetWait(&p, 1, -1, &ready, 100);
+    if (result < 0) {
+      if (errno == EINTR)
+        continue;
+      break;
+    }
+    if (pending && (p.readable || p.writable)) {
+      int error = 0;
+      socklen_t length = sizeof(error);
+      if (getsockopt(p.fd, SOL_SOCKET, SO_ERROR, &error, &length) < 0 ||
+          error) {
+        NetClose(&p);
+        pending = false;
+        continue;
+      }
+      pending = false;
+    }
+    if (p.fd < 0 || pending)
+      continue;
+    if ((p.writable && !NetFlush(&p)) ||
+        (p.readable && !NetRead(&p, callback, context)) || p.closing)
+      break;
+    if (action && !action(&p, context))
+      break;
+    uint64_t now = NetNow();
+    if (p.role) {
+      deadline = p.last + 5000;
+      if (now >= ping) {
+        if (!NetQueue(&p, "PING\n"))
+          break;
+        ping = now + 1000;
+      }
+    }
+  }
+  NetClose(&p);
+  if (fcntl(STDOUT_FILENO, F_SETFL, flags) < 0)
+    perror("stdout flags");
+  if (!interrupted)
+    fprintf(stderr, "Соединение завершено или истёк срок ожидания\n");
+  return interrupted ? 128 + interrupted : 1;
+}
