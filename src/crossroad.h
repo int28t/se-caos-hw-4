@@ -76,6 +76,7 @@ typedef struct Snapshot {
 } Snapshot;
 
 bool Number(const char *text, uint64_t limit, uint64_t *value);
+bool WriteText(int fd, const char *text);
 bool ReadText(const char *path, char *text, size_t capacity);
 bool ConfigLoad(Config *cfg, const char *path);
 // cfg должна пройти ConfigLoad; временем владеет вызывающий сервер.

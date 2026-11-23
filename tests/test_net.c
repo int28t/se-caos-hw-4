@@ -64,7 +64,8 @@ int main(void) {
   large[LINE_SIZE - 1] = '\n';
   CHECK(write(fds[1], large, LINE_SIZE) == LINE_SIZE &&
         NetRead(&p, LongLine, NULL));
-  CHECK(shutdown(fds[1], SHUT_WR) == 0 && !NetRead(&p, Line, NULL));
+  CHECK(shutdown(fds[1], SHUT_WR) == 0 && NetRead(&p, Line, NULL));
+  CHECK(p.closing && p.size > p.sent);
   NetClose(&p);
   CHECK(close(fds[1]) == 0);
   puts("protocol buffers: framing, partial send, overflow, EOF and fd guard "

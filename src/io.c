@@ -52,3 +52,17 @@ bool ReadText(const char *path, char *text, size_t capacity) {
     fprintf(stderr, "Не удалось прочитать обычный текстовый файл: %s\n", path);
   return ok;
 }
+
+// Для неблокирующего fd EAGAIN означает отказ вывода, а не вечное ожидание.
+bool WriteText(int fd, const char *text) {
+  size_t used = 0, size = strlen(text);
+  while (used < size) {
+    ssize_t n = write(fd, text + used, size - used);
+    if (n < 0 && errno == EINTR)
+      continue;
+    if (n <= 0)
+      return false;
+    used += (size_t)n;
+  }
+  return true;
+}

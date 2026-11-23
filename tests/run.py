@@ -36,6 +36,7 @@ class Harness(unittest.TestCase):
         return p
 
     def cleanup(self):
+        stuck = []
         for s in self.sockets:
             s.close()
         for p in self.children:
@@ -46,10 +47,11 @@ class Harness(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 p.kill()
                 p.wait()
-                self.fail('process did not exit on SIGTERM')
+                stuck.append(p.pid)
             finally:
                 if p.stdout:
                     p.stdout.close()
+        self.assertFalse(stuck, f'processes did not exit on SIGTERM: {stuck}')
 
     def connect(self):
         end = time.monotonic() + 3
@@ -128,6 +130,29 @@ class Protocol(Harness):
                     self.assertEqual(line, error)
                     break
 
+    def test_half_close_preserves_reply(self):
+        peer = self.connect()
+        peer.sendall(b'HELLO 1 FLOW A\n')
+        peer.shutdown(socket.SHUT_WR)
+        self.assertEqual(self.line(peer), b'WELCOME 0 39 1000 0 20\n')
+        self.assertEqual(peer.recv(1), b'')
+
+    def test_blocked_client_stdout(self):
+        with socket.socket() as fake:
+            fake.bind(('127.0.0.1', 0))
+            fake.listen(1)
+            fake.settimeout(3)
+            client = self.spawn('client', '127.0.0.1', str(fake.getsockname()[1]), 'A')
+            connection, _ = fake.accept()
+            with connection:
+                connection.settimeout(2)
+                self.assertEqual(self.line(connection), b'HELLO 1 FLOW A\n')
+                try:
+                    connection.sendall(b'WELCOME 0 39 1000 0 20\n' + b'EVENT 1 0 0 test\n' * 20000)
+                except (ConnectionResetError, BrokenPipeError, socket.timeout):
+                    pass
+                self.assertEqual(client.wait(timeout=2), 1)
+
     def test_connection_refused(self):
         with socket.socket() as probe:
             probe.bind(('127.0.0.1', 0))
@@ -181,6 +206,11 @@ class Scenarios(Harness):
                 if summary['passed']:
                     with self.assertRaises(AssertionError):
                         verify(re.sub(r'срок=\d+', 'срок=0', text, count=1), config)
+                    with self.assertRaises(AssertionError):
+                        verify(re.sub(r'ИТОГО: прибыло=\d+', 'ИТОГО: прибыло=0', text), config)
+                if summary['simultaneous']:
+                    with self.assertRaises(AssertionError):
+                        verify(text, config.replace('conflict A B 0', 'conflict A B 1'))
                 return summary
             finally:
                 for f in files:

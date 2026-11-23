@@ -1,8 +1,10 @@
 #include "net.h"
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 typedef struct Generator {
   uint64_t values[5], tick, last;
@@ -41,7 +43,10 @@ static bool Line(Peer *p, const char *line, void *context) {
         return false;
     p->role = 1;
   }
-  return printf("%s\n", line) >= 0 && fflush(stdout) == 0;
+  char output[LINE_SIZE + 1];
+  int n = snprintf(output, sizeof(output), "%s\n", line);
+  return n > 0 && (size_t)n < sizeof(output) &&
+         WriteText(STDOUT_FILENO, output);
 }
 int main(int argc, char **argv) {
   if (argc != 4 || !NetAddress(argv[1], argv[2]) ||
@@ -55,6 +60,11 @@ int main(int argc, char **argv) {
       return 2;
   if (!NetSignals()) {
     perror("sigaction");
+    return 1;
+  }
+  int flags = fcntl(STDOUT_FILENO, F_GETFL);
+  if (flags < 0 || fcntl(STDOUT_FILENO, F_SETFL, flags | O_NONBLOCK) < 0) {
+    perror("stdout");
     return 1;
   }
   Generator generator = {0};
@@ -93,7 +103,7 @@ int main(int argc, char **argv) {
     if (p.fd < 0 || pending)
       continue;
     if ((p.writable && !NetFlush(&p)) ||
-        (p.readable && !NetRead(&p, Line, &generator)))
+        (p.readable && !NetRead(&p, Line, &generator)) || p.closing)
       break;
     if (generator.pending) {
       generator.pending = false;
@@ -120,6 +130,8 @@ int main(int argc, char **argv) {
     }
   }
   NetClose(&p);
+  if (fcntl(STDOUT_FILENO, F_SETFL, flags) < 0)
+    perror("stdout flags");
   if (!interrupted)
     fprintf(stderr, "Соединение завершено или истёк срок ожидания\n");
   return interrupted ? 128 + interrupted : 1;

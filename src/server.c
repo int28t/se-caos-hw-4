@@ -28,19 +28,8 @@ static void Event(void *context, int stream, uint64_t sequence, uint64_t now,
     s->failed = true;
     return;
   }
-  if (stream < 0 && !s->failed) {
-    size_t offset = 0;
-    while (offset < (size_t)n) {
-      ssize_t count = write(STDOUT_FILENO, line + offset, (size_t)n - offset);
-      if (count < 0 && errno == EINTR)
-        continue;
-      if (count <= 0) {
-        s->failed = true;
-        break;
-      }
-      offset += (size_t)count;
-    }
-  }
+  if (stream < 0 && !s->failed && !WriteText(STDOUT_FILENO, line))
+    s->failed = true;
   for (unsigned i = 0; i < MAX_PEERS; ++i) {
     Peer *p = &peers[i];
     if (p->fd >= 0 && !p->closing && p->role == 1 && p->stream == stream &&

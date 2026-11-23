@@ -127,8 +127,11 @@ bool NetRead(Peer *p, LineCallback callback, void *context) {
     ssize_t n = recv(p->fd, buffer, sizeof(buffer), 0);
     if (n < 0)
       return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR;
-    if (!n)
-      return false;
+    if (!n) {
+      // FIN закрывает чтение, но не отменяет уже поставленные ответы.
+      p->closing = true;
+      return p->used == 0;
+    }
     for (size_t i = 0; i < (size_t)n && !p->closing; ++i) {
       char c = buffer[i];
       if (!c || (p->used == LINE_SIZE - 1 && c != '\n'))
