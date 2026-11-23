@@ -6,13 +6,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#define CHECK(x)                                                               \
-  do {                                                                         \
-    if (!(x)) {                                                                \
-      fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x);                  \
-      exit(1);                                                                 \
-    }                                                                          \
-  } while (0)
+#define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); exit(1); } } while (0)
 static unsigned events, pedestrians, refusals;
 static uint64_t sequence, eventTime;
 static void Event(void *context, int stream, uint64_t seq, uint64_t now,
