@@ -15,7 +15,9 @@ static bool Line(Peer *p, const char *line, void *context) {
   uint64_t values[2];
   if (!strcmp(line, "PONG"))
     return p->role != 0;
-  if (!p->role) {
+  if (NetStop(p, line)) {
+    // Сохраняем финальный STOP также в журнале наблюдателя.
+  } else if (!p->role) {
     if (strcmp(line, "WELCOME WATCH"))
       return false;
     p->role = 2;

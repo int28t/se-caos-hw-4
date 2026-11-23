@@ -19,7 +19,9 @@ static bool Line(Peer *p, const char *line, void *context) {
   Generator *g = context;
   if (!strcmp(line, "PONG"))
     return p->role != 0;
-  if (p->role) {
+  if (NetStop(p, line)) {
+    // STOP печатается до завершения общего клиентского цикла.
+  } else if (p->role) {
     uint64_t v[3];
     if (NetNumbers(line, "TICK ", v, 1)) {
       if (g->emitted && v[0] <= g->last)

@@ -88,8 +88,10 @@ static bool Line(Peer *p, const char *line, void *context) {
   if (p->role) {
     if (!strcmp(line, "PING"))
       return NetQueue(p, "PONG\n");
+    if (s->model.stop)
+      return true;
     uint64_t values[2];
-    if (p->role != 1 || !s->started || s->model.stop ||
+    if (p->role != 1 || !s->started ||
         !NetNumbers(line, "ARRIVE ", values, 2) || values[1] > 1 ||
         (values[1] && c->streams[p->stream].kind != CAR))
       return Reject(p, "ERROR command\n");
@@ -250,9 +252,20 @@ int main(int argc, char **argv) {
     ModelStop(&s.model, SIGNAL, (unsigned)interrupted);
   if (close(listener) < 0)
     s.failed = true;
-  // Сбрасываем уже сформированные итоги; протокол STOP добавляется в этапе 6.
-  for (unsigned i = 0; i < MAX_PEERS; ++i)
-    peers[i].closing = true;
+  unsigned status = s.model.stop == SIGNAL              ? 128 + s.model.signo
+                    : s.failed || s.model.stop == ERROR ? 1
+                    : s.model.stop == UNREACHABLE       ? 3
+                                                        : 0;
+  char stop[64];
+  int n = snprintf(stop, sizeof(stop), "STOP %u %u\n", (unsigned)s.model.stop,
+                   status);
+  for (unsigned i = 0; i < MAX_PEERS; ++i) {
+    Peer *p = &peers[i];
+    if (p->fd >= 0 && !p->closing &&
+        (n < 0 || (size_t)n >= sizeof(stop) || !NetQueue(p, stop)))
+      NetClose(p);
+    p->closing = true;
+  }
   uint64_t deadline = NetNow() + 2000;
   while (NetNow() < deadline) {
     bool pending = false, ready;
@@ -270,8 +283,5 @@ int main(int argc, char **argv) {
     NetClose(&peers[i]);
   if (fcntl(STDOUT_FILENO, F_SETFL, flags) < 0)
     s.failed = true;
-  return interrupted                         ? 128 + interrupted
-         : s.failed || s.model.stop == ERROR ? 1
-         : s.model.stop == UNREACHABLE       ? 3
-                                             : 0;
+  return s.failed ? 1 : (int)status;
 }

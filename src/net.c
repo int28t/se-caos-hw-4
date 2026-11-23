@@ -231,6 +231,7 @@ int NetClient(const char *ip, const char *port, const char *hello,
   Peer p = {.fd = -1};
   uint64_t deadline = NetNow() + 10000, ping = 0, retryAt = 0;
   bool pending = false;
+  int status = 1;
   while (!interrupted && NetNow() < deadline) {
     if (p.fd < 0 && NetNow() >= retryAt) {
       retryAt = NetNow() + 100;
@@ -259,8 +260,12 @@ int NetClient(const char *ip, const char *port, const char *hello,
     if (p.fd < 0 || pending)
       continue;
     if ((p.writable && !NetFlush(&p)) ||
-        (p.readable && !NetRead(&p, callback, context)) || p.closing)
+        (p.readable && !NetRead(&p, callback, context)))
       break;
+    if (p.closing) {
+      status = p.stopped ? 0 : 1;
+      break;
+    }
     if (action && !action(&p, context))
       break;
     uint64_t now = NetNow();
@@ -274,9 +279,20 @@ int NetClient(const char *ip, const char *port, const char *hello,
     }
   }
   NetClose(&p);
-  if (fcntl(STDOUT_FILENO, F_SETFL, flags) < 0)
+  if (fcntl(STDOUT_FILENO, F_SETFL, flags) < 0) {
     perror("stdout flags");
-  if (!interrupted)
+    status = 1;
+  }
+  if (!interrupted && status)
     fprintf(stderr, "Соединение завершено или истёк срок ожидания\n");
-  return interrupted ? 128 + interrupted : 1;
+  return interrupted ? 128 + interrupted : status;
+}
+
+bool NetStop(Peer *p, const char *line) {
+  uint64_t v[2];
+  if (!NetNumbers(line, "STOP ", v, 2) || !v[0] || v[0] > UNREACHABLE ||
+      v[1] > 255)
+    return false;
+  p->stopped = p->closing = true;
+  return true;
 }

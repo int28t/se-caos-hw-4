@@ -22,6 +22,9 @@ static bool Line(Peer *p, const char *line, void *ctx) {
 }
 int main(void) {
   CHECK(NetSignals());
+  Peer terminal = {.fd = -1};
+  CHECK(!NetStop(&terminal, "STOP 0 0") && !NetStop(&terminal, "STOP 1 256"));
+  CHECK(NetStop(&terminal, "STOP 1 0") && terminal.stopped && terminal.closing);
   uint64_t values[2];
   CHECK(NetNumbers("ARRIVE 0 1", "ARRIVE ", values, 2) && values[0] == 0 &&
         values[1] == 1);

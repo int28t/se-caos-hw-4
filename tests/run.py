@@ -13,7 +13,7 @@ from check_log import verify
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--build-dir', type=Path, required=True)
-parser.add_argument('--suite', choices=['protocol', 'scenarios', 'observers'], default='protocol')
+parser.add_argument('--suite', choices=['protocol', 'scenarios', 'observers', 'lifecycle'], default='protocol')
 args = parser.parse_args()
 build = args.build_dir.resolve()
 root = Path(__file__).resolve().parents[1]
@@ -142,6 +142,12 @@ class Protocol(Harness):
         self.assertEqual(self.line(peer), b'WELCOME 0 39 1000 0 20\n')
         self.assertEqual(peer.recv(1), b'')
 
+    def test_closed_client_stdout(self):
+        client = self.spawn('client', '127.0.0.1', str(self.port), 'A')
+        client.stdout.close()
+        self.assertEqual(client.wait(timeout=2), 1)
+        self.assertIsNone(self.server.poll())
+
     def test_blocked_client_stdout(self):
         with socket.socket() as fake:
             fake.bind(('127.0.0.1', 0))
@@ -202,7 +208,7 @@ class Scenarios(Harness):
                            for i, name in enumerate(['A','B','P'])]
                 self.assertEqual(server.wait(timeout=8), expected)
                 for client in clients:
-                    self.assertIn(client.wait(timeout=3), (0, 1))
+                    self.assertEqual(client.wait(timeout=3), 0)
                 text = ''
                 for f in files:
                     f.seek(0)
@@ -282,13 +288,13 @@ class Observers(Harness):
         self.assertEqual(seq, 0)
         self.assertIn('STATE 0 0 0 0 0 0', rows)
 
-    def events(self, peer):
+    def events(self, peer, all_lines=False):
         rows = []
         while True:
             line = self.line(peer).decode().strip()
             if not line:
                 return rows
-            if line.startswith('EVENT '):
+            if all_lines or line.startswith('EVENT '):
                 rows.append(line)
 
     def test_observers_reconnect_and_log(self):
@@ -324,7 +330,7 @@ class Observers(Harness):
             later = self.events(late)
             self.assertEqual(later, [r for r in all_events if int(r.split()[1]) > boundary])
             self.assertEqual(self.server.wait(timeout=2), 0)
-            self.assertEqual(observer.wait(timeout=2), 1)  # STOP появится в этапе 6.
+            self.assertEqual(observer.wait(timeout=2), 0)
             full = path.read_text()
             self.assertGreater(verify(full, (root/'data/minimal.conf').read_text())['passed'], 0)
             before = full
@@ -343,7 +349,127 @@ class Observers(Harness):
 
 
 
+class Lifecycle(Harness):
+    snapshot, events = Observers.snapshot, Observers.events
+
+    def start(self):
+        watch, _, _ = self.snapshot()
+        clients = [self.spawn('client', '127.0.0.1', str(self.port), name,
+                              output=subprocess.DEVNULL) for name in ['A', 'P']]
+        return watch, clients
+
+    def test_restart_during_crossing(self):
+        watch, clients = self.start()
+        rows, active, queued = [], 0, 0
+        while not (active and queued):
+            row = self.line(watch).decode().strip()
+            self.assertTrue(row)
+            rows.append(row)
+            if row.split()[3] == '0':
+                fields = dict(re.findall(r'(\w+)=([^ ]+)', row))
+                if 'Разрешение:' in row:
+                    active, queued = int(fields['id']), int(fields['очередь'])
+                elif 'Выход:' in row:
+                    active = 0
+                elif 'Очередь:' in row:
+                    queued = int(fields['размер'])
+        clients[0].kill()
+        self.assertEqual(clients[0].wait(timeout=2), -signal.SIGKILL)
+        while not ('Выход:' in rows[-1] and f'id={active} ' in rows[-1]):
+            rows.append(self.line(watch).decode().strip())
+            self.assertTrue(rows[-1])
+        replacement = self.spawn('client', '127.0.0.1', str(self.port), 'A', output=subprocess.DEVNULL)
+        tail = self.events(watch)
+        self.assertTrue(any('Прибытие: поток=A ' in row for row in tail))
+        self.assertEqual(self.server.wait(timeout=3), 0)
+        self.assertEqual(replacement.wait(timeout=2), 0)
+        verify('\n'.join(rows + tail), (root/'data/minimal.conf').read_text())
+
+    def stop_server(self, sig, code):
+        watch, clients = self.start()
+        observer = self.spawn('observer', '127.0.0.1', str(self.port))
+        self.assertTrue(select.select([observer.stdout], [], [], 2)[0])
+        self.assertEqual(observer.stdout.readline(), b'WELCOME WATCH\n')
+        clients.append(observer)
+        self.assertTrue(self.line(watch).startswith(b'EVENT '))
+        self.server.send_signal(sig)
+        self.assertEqual(self.server.wait(timeout=3), -sig if sig == signal.SIGKILL else 128 + sig)
+        for client in clients:
+            self.assertEqual(client.wait(timeout=3), code)
+        if code == 0:
+            self.assertIn(b'STOP ', b'\n'.join(row.encode() for row in self.events(watch, True)))
+
+    def test_signal_shutdown(self):
+        self.stop_server(signal.SIGTERM, 0)
+
+    def test_interrupt_shutdown(self):
+        self.stop_server(signal.SIGINT, 0)
+
+    def test_server_killed(self):
+        self.stop_server(signal.SIGKILL, 1)
+
+    def test_shared_stop_deadline(self):
+        watch, clients = self.start()
+        begin = time.monotonic()
+        for _ in range(3):
+            slow, _, _ = self.snapshot()
+            slow.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024)
+            slow.settimeout(.3)
+            try:
+                slow.sendall(b'PING\n' * 200000)
+            except (socket.timeout, ConnectionResetError, BrokenPipeError):
+                pass
+        self.assertEqual(self.server.wait(timeout=5), 0)
+        self.assertLess(time.monotonic() - begin, 5.5)
+        for client in clients:
+            self.assertEqual(client.wait(timeout=2), 0)
+
+    def test_startup_timeout(self):
+        client = self.spawn('client', '127.0.0.1', str(self.port), 'A', output=subprocess.DEVNULL)
+        self.assertEqual(self.server.wait(timeout=12), 1)
+        self.assertEqual(client.wait(timeout=2), 0)
+
+    def test_blackhole_without_fin(self):
+        with socket.socket() as proxy:
+            proxy.bind(('127.0.0.1', 0)); proxy.listen(1); proxy.settimeout(3)
+            client = self.spawn('client', '127.0.0.1', str(proxy.getsockname()[1]), 'A')
+            front, _ = proxy.accept()
+            with front:
+                front.settimeout(2)
+                back = self.connect()
+                back.sendall(self.line(front))
+                front.sendall(self.line(back))  # Дальше proxy не передаёт ни данные, ни FIN.
+                self.assertEqual(client.wait(timeout=7), 1)
+            replacement = self.spawn('client', '127.0.0.1', str(self.port), 'A')
+            self.assertTrue(select.select([replacement.stdout], [], [], 2)[0])
+            self.assertTrue(replacement.stdout.readline().startswith(b'WELCOME '))
+
+    def test_duplicate_after_reconnect(self):
+        self.server.terminate(); self.server.wait(timeout=2)
+        with tempfile.TemporaryDirectory(dir=build) as tmp:
+            path = Path(tmp)/'slow.conf'
+            path.write_text((root/'data/minimal.conf').read_text().replace('tick_ms 20', 'tick_ms 60000'))
+            self.server = self.spawn('server', '127.0.0.1', str(self.port), str(path))
+            a, p = self.connect(), self.connect()
+            for peer, name in [(a, 'A'), (p, 'P')]:
+                peer.sendall(f'HELLO 1 FLOW {name}\n'.encode())
+                self.assertTrue(self.line(peer).startswith(b'WELCOME '))
+            self.assertEqual(self.line(a), b'TICK 0\n')
+            a.sendall(b'ARRIVE 0 0\n')
+            while True:
+                row = self.line(a)
+                self.assertTrue(row)
+                if row.startswith(b'ACK 0 '):
+                    break
+            a.shutdown(socket.SHUT_WR)
+            self.events(a, True)
+            again = self.connect(); again.sendall(b'HELLO 1 FLOW A\n')
+            self.assertTrue(self.line(again).startswith(b'WELCOME '))
+            again.sendall(b'ARRIVE 0 0\n')
+            self.assertEqual(self.line(again), b'ERROR tick\n')
+
+
 if __name__ == '__main__':
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(
-        {'protocol': Protocol, 'scenarios': Scenarios, 'observers': Observers}[args.suite])
+        {'protocol': Protocol, 'scenarios': Scenarios, 'observers': Observers, 'lifecycle': Lifecycle}[args.suite])
     raise SystemExit(not unittest.TextTestRunner().run(suite).wasSuccessful())

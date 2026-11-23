@@ -11,12 +11,13 @@ typedef struct Peer {
   char input[LINE_SIZE], output[SEND_SIZE];
   size_t used, sent, size;
   uint64_t last;
-  bool readable, writable, closing;
+  bool readable, writable, closing, stopped;
 } Peer;
 typedef bool (*LineCallback)(Peer *peer, const char *line, void *context);
 extern volatile sig_atomic_t interrupted;
 bool NetSignals(void);
 uint64_t NetNow(void);
+bool NetStop(Peer *peer, const char *line);
 bool NetNumbers(const char *line, const char *prefix, uint64_t *values,
                 size_t count);
 bool NetAddress(const char *ip, const char *port);
