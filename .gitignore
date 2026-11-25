@@ -53,3 +53,12 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# Local CMake builds and test results
+build*/
+
+# Python test cache
+__pycache__/
+
+# LaTeX report source
+*.tex
