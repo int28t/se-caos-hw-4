@@ -59,3 +59,6 @@ build*/
 
 # Python test cache
 __pycache__/
+
+# LaTeX report source
+*.tex
