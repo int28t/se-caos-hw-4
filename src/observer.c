@@ -16,7 +16,6 @@ static bool Line(Peer *p, const char *line, void *context) {
   if (!strcmp(line, "PONG"))
     return p->role != 0;
   if (NetStop(p, line)) {
-    // Сохраняем финальный STOP также в журнале наблюдателя.
   } else if (!p->role) {
     if (strcmp(line, "WELCOME WATCH"))
       return false;
@@ -55,9 +54,12 @@ int main(int argc, char **argv) {
             "Использование: crossroad_observer SERVER_IP PORT [NEW_LOG]\n");
     return 2;
   }
+  if (fcntl(STDOUT_FILENO, F_GETFL) < 0) {
+    perror("stdout");
+    return 1;
+  }
   View view = {.log = -1};
   if (argc == 4) {
-    // Только новый обычный файл: конфиг и чужой существующий лог не затираются.
     view.log = open(argv[3],
                     O_WRONLY | O_CREAT | O_EXCL | O_NONBLOCK | O_CLOEXEC, 0600);
     struct stat st;

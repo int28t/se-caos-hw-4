@@ -9,11 +9,12 @@ import time
 import unittest
 import tempfile
 import re
+import os
 from check_log import verify
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--build-dir', type=Path, required=True)
-parser.add_argument('--suite', choices=['protocol', 'scenarios', 'observers', 'lifecycle'], default='protocol')
+parser.add_argument('--suite', choices=['protocol', 'scenarios', 'observers', 'lifecycle', 'stress'], default='protocol')
 args = parser.parse_args()
 build = args.build_dir.resolve()
 root = Path(__file__).resolve().parents[1]
@@ -147,6 +148,15 @@ class Protocol(Harness):
         client.stdout.close()
         self.assertEqual(client.wait(timeout=2), 1)
         self.assertIsNone(self.server.poll())
+
+    def test_observer_without_stdout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory)/'observer.log'
+            observer = subprocess.run(
+                [str(build/'crossroad_observer'), '127.0.0.1', str(self.port), str(log)],
+                preexec_fn=lambda: os.close(1), stderr=subprocess.DEVNULL, timeout=2)
+            self.assertEqual(observer.returncode, 1)
+            self.assertFalse(log.exists())
 
     def test_blocked_client_stdout(self):
         with socket.socket() as fake:
@@ -470,6 +480,16 @@ class Lifecycle(Harness):
 
 
 if __name__ == '__main__':
-    suite = unittest.defaultTestLoader.loadTestsFromTestCase(
-        {'protocol': Protocol, 'scenarios': Scenarios, 'observers': Observers, 'lifecycle': Lifecycle}[args.suite])
-    raise SystemExit(not unittest.TextTestRunner().run(suite).wasSuccessful())
+    if args.suite == 'stress':
+        cases = [(Scenarios, 'test_fixed_and_compatible'), (Observers, 'test_observers_reconnect_and_log'),
+                 (Lifecycle, 'test_restart_during_crossing'), (Scenarios, 'test_exact_target')]
+        suite = unittest.TestSuite(cls(name) for cls, name in cases * 5)
+    else:
+        suite = unittest.defaultTestLoader.loadTestsFromTestCase(
+            {'protocol': Protocol, 'scenarios': Scenarios, 'observers': Observers, 'lifecycle': Lifecycle}[args.suite])
+    fd_dir = Path('/proc/self/fd') if Path('/proc/self/fd').exists() else Path('/dev/fd')
+    before = len(os.listdir(fd_dir))
+    result = unittest.TextTestRunner().run(suite)
+    if args.suite == 'stress':
+        assert len(os.listdir(fd_dir)) == before, 'test harness leaked file descriptors'
+    raise SystemExit(not result.wasSuccessful())

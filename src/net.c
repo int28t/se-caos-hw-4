@@ -121,14 +121,12 @@ bool NetFlush(Peer *p) {
   return true;
 }
 bool NetRead(Peer *p, LineCallback callback, void *context) {
-  // Ограничиваем работу одного peer за проход общего цикла.
   for (unsigned batch = 0; batch < 4 && !p->closing; ++batch) {
     char buffer[LINE_SIZE];
     ssize_t n = recv(p->fd, buffer, sizeof(buffer), 0);
     if (n < 0)
       return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR;
     if (!n) {
-      // FIN закрывает чтение, но не отменяет уже поставленные ответы.
       p->closing = true;
       return p->used == 0;
     }

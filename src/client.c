@@ -20,7 +20,6 @@ static bool Line(Peer *p, const char *line, void *context) {
   if (!strcmp(line, "PONG"))
     return p->role != 0;
   if (NetStop(p, line)) {
-    // STOP печатается до завершения общего клиентского цикла.
   } else if (p->role) {
     uint64_t v[3];
     if (NetNumbers(line, "TICK ", v, 1)) {
@@ -63,15 +62,10 @@ static bool Generate(Peer *p, void *context) {
   return n > 0 && (size_t)n < sizeof(request) && NetQueue(p, request);
 }
 int main(int argc, char **argv) {
-  if (argc != 4 || !NetAddress(argv[1], argv[2]) ||
-      strlen(argv[3]) >= NAME_SIZE || !*argv[3]) {
+  if (argc != 4 || !NetAddress(argv[1], argv[2]) || !ValidName(argv[3])) {
     fprintf(stderr, "Использование: crossroad_client SERVER_IP PORT STREAM\n");
     return 2;
   }
-  for (const char *s = argv[3]; *s; ++s)
-    if (!((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') ||
-          (*s >= '0' && *s <= '9') || *s == '_' || *s == '-'))
-      return 2;
   Generator generator = {0};
   char hello[64];
   int n = snprintf(hello, sizeof(hello), "HELLO 1 FLOW %s\n", argv[3]);

@@ -191,7 +191,6 @@ static void SelectionTests(Config c) {
   ModelAdvance(&m, 0);
   CHECK(ModelArrive(&m, 1, false, 0));
   CHECK(ModelArrive(&m, 0, true, NS));
-  // Приоритет своего направления не вызывает преждевременный переход.
   ModelAdvance(&m, 2 * NS - 1);
   CHECK(m.state == GREEN && m.phase == 0);
   c.streams[1].kind = CAR;
@@ -204,7 +203,7 @@ static void SelectionTests(Config c) {
   CHECK(m.state == CLEARANCE);
   ModelAdvance(&m, 3 * NS);
   CHECK(m.phase == 1 && m.flows[1].active.id == 1);
-  CHECK(!m.flows[1].active.emergency); // Экстренный не обгоняет голову FIFO.
+  CHECK(!m.flows[1].active.emergency);
   c.strategy = ADAPTIVE;
   c.priority = false;
   Init(&m, &c);
@@ -216,7 +215,7 @@ static void SelectionTests(Config c) {
   CHECK(ModelArrive(&m, 0, false, 0));
   CHECK(ModelArrive(&m, 1, false, 0) && ModelArrive(&m, 1, false, 0));
   ModelAdvance(&m, 0);
-  CHECK(m.phase == 1); // При равном возрасте выбирается длина.
+  CHECK(m.phase == 1);
   c.phaseCount = 1;
   c.phases[0].mask = 1;
   c.streamCount = 1;

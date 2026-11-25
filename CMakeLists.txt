@@ -39,4 +39,7 @@ if(BUILD_TESTING)
   add_test(NAME lifecycle COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/run.py
       --build-dir ${CMAKE_CURRENT_BINARY_DIR} --suite lifecycle)
   set_tests_properties(lifecycle PROPERTIES TIMEOUT 50)
+  add_test(NAME stress COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/run.py
+      --build-dir ${CMAKE_CURRENT_BINARY_DIR} --suite stress)
+  set_tests_properties(stress PROPERTIES TIMEOUT 120 LABELS stress)
 endif()

@@ -150,11 +150,12 @@ static unsigned Delay(const Session *s) {
     return 100;
   const Model *m = &s->model;
   uint64_t next = (m->now / m->tick + 1) * m->tick;
-  uint64_t phase = m->since + (m->state == CLEARANCE ? m->cfg.clearance
-                               : m->now - m->since < m->cfg.minGreen * m->tick
-                                   ? m->cfg.minGreen
-                                   : m->cfg.maxGreen) *
-                                  m->tick;
+  unsigned duration = m->cfg.maxGreen;
+  if (m->state == CLEARANCE)
+    duration = m->cfg.clearance;
+  else if (m->now - m->since < m->cfg.minGreen * m->tick)
+    duration = m->cfg.minGreen;
+  uint64_t phase = m->since + duration * m->tick;
   if ((m->state == GREEN || m->state == CLEARANCE) && phase > m->now &&
       phase < next)
     next = phase;

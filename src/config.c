@@ -2,16 +2,6 @@
 #include <stdio.h>
 #include <string.h>
 
-static bool Name(const char *s) {
-  size_t n = strlen(s);
-  if (!n || n >= NAME_SIZE)
-    return false;
-  for (; *s; ++s)
-    if (!((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') ||
-          (*s >= '0' && *s <= '9') || *s == '_' || *s == '-'))
-      return false;
-  return true;
-}
 static int Index(const char *s, const char *const *names, unsigned count) {
   for (unsigned i = 0; i < count; ++i)
     if (!strcmp(s, names[i]))
@@ -32,7 +22,7 @@ static bool Line(Config *c, char **t, unsigned count) {
     const char *const maneuvers[] = {"straight", "right", "left", "walk"};
     int kind = Index(t[2], kinds, 2), dir = Index(t[3], directions, 4);
     int turn = Index(t[4], maneuvers, 4);
-    if (c->streamCount == MAX_STREAMS || !Name(t[1]) ||
+    if (c->streamCount == MAX_STREAMS || !ValidName(t[1]) ||
         StreamIndex(c, t[1]) >= 0 || kind < 0 || dir < 0 || turn < 0 ||
         (kind == PEDESTRIAN) != (turn == WALK) ||
         !Number(t[5], MAX_QUEUE, &a) || !a || !Number(t[6], 1000, &b) || !b ||
@@ -50,7 +40,7 @@ static bool Line(Config *c, char **t, unsigned count) {
     return true;
   }
   if (!strcmp(t[0], "phase") && count >= 3) {
-    if (c->phaseCount == MAX_PHASES || !Name(t[1]))
+    if (c->phaseCount == MAX_PHASES || !ValidName(t[1]))
       return false;
     for (unsigned i = 0; i < c->phaseCount; ++i)
       if (!strcmp(c->phases[i].name, t[1]))

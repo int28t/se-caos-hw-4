@@ -6,6 +6,16 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+bool ValidName(const char *s) {
+  size_t n = strlen(s);
+  if (!n || n >= NAME_SIZE)
+    return false;
+  for (; *s; ++s)
+    if (!((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') ||
+          (*s >= '0' && *s <= '9') || *s == '_' || *s == '-'))
+      return false;
+  return true;
+}
 bool Number(const char *s, uint64_t limit, uint64_t *value) {
   if (!*s)
     return false;

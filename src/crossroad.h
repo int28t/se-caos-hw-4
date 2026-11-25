@@ -75,6 +75,7 @@ typedef struct Snapshot {
   FlowView flows[MAX_STREAMS];
 } Snapshot;
 
+bool ValidName(const char *text);
 bool Number(const char *text, uint64_t limit, uint64_t *value);
 bool WriteText(int fd, const char *text);
 bool ReadText(const char *path, char *text, size_t capacity);
